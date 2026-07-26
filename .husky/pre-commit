@@ -1,0 +1,30 @@
+#!/usr/bin/env sh
+set +e
+
+TEMP_FILE=$(mktemp)
+npx lint-staged > "$TEMP_FILE" 2>&1
+EXIT_CODE=$?
+
+OUTPUT=$(cat "$TEMP_FILE")
+rm -f "$TEMP_FILE"
+
+printf "%s\n" "$OUTPUT"
+
+if [ $EXIT_CODE -ne 0 ]; then
+  case "$OUTPUT" in
+    *"No staged files match any configured tasks"*|*"could not find any staged files"* )
+      # Harmless no-op when zero matching files are staged
+      exit 0
+      ;;
+    * )
+      exit $EXIT_CODE
+      ;;
+  esac
+fi
+
+# Stray .js guard block with allowlist for config files
+STRAY_JS=$(git diff --cached --name-only | grep '\.js$' | grep -v '\.config\.js$')
+if [ -n "$STRAY_JS" ]; then
+  echo "Error: Committing raw .js files is not allowed."
+  exit 1
+fi

@@ -1,0 +1,2 @@
+jest.config.js linguist-vendored=true
+eslint.config.mjs linguist-vendored=true

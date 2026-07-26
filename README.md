@@ -1,14 +1,51 @@
-# Welcome to your CDK TypeScript project
+# Dispatch Webhook Engine
 
-This is a blank project for CDK development with TypeScript.
+A TypeScript-based AWS CDK project designed for managing and dispatching webhooks.
 
-The `cdk.json` file tells the CDK Toolkit how to execute your app.
+## Prerequisites
 
-## Useful commands
+Ensure you have the following installed on your local machine:
 
-* `npm run build`   type-check the project
-* `npm run watch`   watch for changes and type-check
-* `npm run test`    perform the jest unit tests
-* `npx cdk deploy`  deploy this stack to your default AWS account/region
-* `npx cdk diff`    compare deployed stack with current state
-* `npx cdk synth`   emits the synthesized CloudFormation template
+- [Node.js](https://nodejs.org/) (managed via `nvm`)
+- [AWS CLI](https://aws.amazon.com/cli/) (configured with appropriate credentials)
+- [AWS CDK Toolkit](https://aws.amazon.com/cdk/) (`npm install -g aws-cdk`)
+
+---
+
+## Setup Instructions
+
+Follow these steps to set up your local development environment:
+
+### 1. Clone the Repository
+
+```bash
+git clone <repository-url>
+cd dispatch-webhook-engine
+```
+
+---
+
+### 2. Configure Node.js Version
+
+Switch to the correct Node.js version specified by the project:
+
+- `nvm use`
+
+---
+
+### 3. Install Dependencies
+
+- `npm install`
+
+---
+
+### Useful Commands
+
+- `Build:` npm run build
+- `Type-Check:` npm run typecheck
+- `Watch Mode:` npm run watch
+- `Run Tests:` npm run test
+- `Run Linter:` npm run lint
+- `Synthesize CloudFormation:` npx cdk synth
+- `Compare Stack State:` npx cdk diff
+- `Deploy Stack:` npx cdk deploy

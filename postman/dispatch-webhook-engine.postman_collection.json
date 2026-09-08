@@ -1,0 +1,58 @@
+{
+  "info": {
+    "name": "Dispatch Webhook Engine",
+    "description": "API collection for the Dispatch Webhook Engine serverless system.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "https://REPLACE-WITH-DEPLOYED-API-URL",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "POST /events - Valid Request",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"eventType\": \"order.shipped\",\n  \"payload\": {\n    \"orderId\": \"12345\",\n    \"trackingNumber\": \"ABC123\"\n  }\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/events",
+          "host": ["{{baseUrl}}"],
+          "path": ["events"]
+        }
+      }
+    },
+    {
+      "name": "POST /events - Invalid Request (missing eventType)",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"payload\": {\n    \"orderId\": \"12345\"\n  }\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/events",
+          "host": ["{{baseUrl}}"],
+          "path": ["events"]
+        }
+      }
+    }
+  ]
+}

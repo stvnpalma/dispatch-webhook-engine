@@ -1,10 +1,12 @@
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
+import { SQSClient, SendMessageCommand } from '@aws-sdk/client-sqs';
 import { DynamoDBDocumentClient, PutCommand } from '@aws-sdk/lib-dynamodb';
 import { APIGatewayProxyHandlerV2 } from 'aws-lambda';
 import crypto from 'crypto';
 
 const client = new DynamoDBClient({});
 const docClient = DynamoDBDocumentClient.from(client);
+const sqsClient = new SQSClient({});
 
 export const handler: APIGatewayProxyHandlerV2 = async (event) => {
   const rawBody = event.body;
@@ -61,13 +63,13 @@ export const handler: APIGatewayProxyHandlerV2 = async (event) => {
   }
 
   const tableName = process.env.EVENTS_TABLE_NAME;
+  const queueUrl = process.env.EVENTS_QUEUE_URL;
 
-  if (!tableName) {
+  if (!tableName || !queueUrl) {
     console.log(
       JSON.stringify({
         level: 'error',
-        message:
-          'Configuration error: EVENTS_TABLE_NAME environment variable is not defined',
+        message: 'Configuration error: Missing environment variables',
       })
     );
 
@@ -86,6 +88,7 @@ export const handler: APIGatewayProxyHandlerV2 = async (event) => {
     createdAt: new Date().toISOString(),
   };
 
+  // 1. DynamoDB Write
   try {
     await docClient.send(
       new PutCommand({
@@ -97,16 +100,10 @@ export const handler: APIGatewayProxyHandlerV2 = async (event) => {
     console.log(
       JSON.stringify({
         level: 'info',
-        message: 'Event successfully ingested and saved',
+        message: 'Event successfully ingested and saved to DynamoDB',
         eventId,
-        eventType,
       })
     );
-
-    return {
-      statusCode: 202,
-      body: JSON.stringify({ eventId }),
-    };
   } catch (error) {
     console.log(
       JSON.stringify({
@@ -121,4 +118,41 @@ export const handler: APIGatewayProxyHandlerV2 = async (event) => {
       body: JSON.stringify({ error: 'Internal server error' }),
     };
   }
+
+  // 2. SQS Send (Independent Try/Catch)
+  try {
+    await sqsClient.send(
+      new SendMessageCommand({
+        QueueUrl: queueUrl,
+        MessageBody: JSON.stringify({ eventId }),
+      })
+    );
+
+    console.log(
+      JSON.stringify({
+        level: 'info',
+        message: 'Event ID successfully sent to SQS queue',
+        eventId,
+      })
+    );
+  } catch (error) {
+    console.log(
+      JSON.stringify({
+        level: 'error',
+        message: 'Failed to send event ID to SQS queue',
+        error: error instanceof Error ? error.message : String(error),
+      })
+    );
+
+    return {
+      statusCode: 500,
+      body: JSON.stringify({ error: 'Internal server error' }),
+    };
+  }
+
+  // 3. Success Response
+  return {
+    statusCode: 202,
+    body: JSON.stringify({ eventId }),
+  };
 };

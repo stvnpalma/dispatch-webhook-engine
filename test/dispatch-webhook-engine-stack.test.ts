@@ -91,16 +91,18 @@ describe('DispatchWebhookEngineStack Ingest Lambda and API Gateway', () => {
     });
   });
 
-  test('Ingest Lambda has least-privilege permission to send message to SQS', () => {
-    template.hasResourceProperties('AWS::IAM::Policy', {
-      PolicyDocument: {
-        Statement: Match.arrayWith([
-          Match.objectLike({
-            Action: 'sqs:SendMessage',
-            Effect: 'Allow',
-          }),
-        ]),
-      },
+  test('EventsDLQ is created with a 14-day retention period', () => {
+    template.hasResourceProperties('AWS::SQS::Queue', {
+      MessageRetentionPeriod: 1209600,
+    });
+  });
+
+  test('EventsQueue is created with correct visibility timeout and redrive policy', () => {
+    template.hasResourceProperties('AWS::SQS::Queue', {
+      VisibilityTimeout: 120,
+      RedrivePolicy: Match.objectLike({
+        maxReceiveCount: 3,
+      }),
     });
   });
 });

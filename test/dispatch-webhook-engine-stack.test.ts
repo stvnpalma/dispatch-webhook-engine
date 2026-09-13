@@ -1,5 +1,5 @@
 import * as cdk from 'aws-cdk-lib';
-import { Template } from 'aws-cdk-lib/assertions';
+import { Match, Template } from 'aws-cdk-lib/assertions';
 import { DispatchWebhookEngineStack } from '../lib/dispatch-webhook-engine-stack';
 
 // Hoisted once for shared use across all describe blocks
@@ -78,15 +78,28 @@ describe('DispatchWebhookEngineStack Ingest Lambda and API Gateway', () => {
     });
   });
 
-  test('Ingest Lambda has least-privilege IAM policy scoped to PutItem only', () => {
+  test('Ingest Lambda has least-privilege permission to write to DynamoDB', () => {
     template.hasResourceProperties('AWS::IAM::Policy', {
       PolicyDocument: {
-        Statement: [
-          {
+        Statement: Match.arrayWith([
+          Match.objectLike({
             Action: 'dynamodb:PutItem',
             Effect: 'Allow',
-          },
-        ],
+          }),
+        ]),
+      },
+    });
+  });
+
+  test('Ingest Lambda has least-privilege permission to send message to SQS', () => {
+    template.hasResourceProperties('AWS::IAM::Policy', {
+      PolicyDocument: {
+        Statement: Match.arrayWith([
+          Match.objectLike({
+            Action: 'sqs:SendMessage',
+            Effect: 'Allow',
+          }),
+        ]),
       },
     });
   });

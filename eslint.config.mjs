@@ -22,7 +22,26 @@ export default defineConfig([
     },
   },
 
-  // 4. CommonJS Config Files Override
+  // 4. Test File Safeguards
+  {
+    files: ['test/**/*.ts'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          paths: [
+            {
+              name: 'node:test',
+              message:
+                'Do not import node:test — Jest globals (test, describe, expect) are already available without importing anything. This shadows Jest and silently breaks the whole file.',
+            },
+          ],
+        },
+      ],
+    },
+  },
+
+  // 5. CommonJS Config Files Override
   {
     files: ['**/*.config.js'],
     languageOptions: {
@@ -31,6 +50,6 @@ export default defineConfig([
     },
   },
 
-  // 5. Prettier Config
+  // 6. Prettier Config
   eslintConfigPrettier,
 ]);

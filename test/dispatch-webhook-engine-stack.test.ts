@@ -91,6 +91,19 @@ describe('DispatchWebhookEngineStack Ingest Lambda and API Gateway', () => {
     });
   });
 
+  test('Ingest Lambda has least-privilege permission to send message to SQS', () => {
+    template.hasResourceProperties('AWS::IAM::Policy', {
+      PolicyDocument: {
+        Statement: Match.arrayWith([
+          Match.objectLike({
+            Action: 'sqs:SendMessage',
+            Effect: 'Allow',
+          }),
+        ]),
+      },
+    });
+  });
+
   test('EventsDLQ is created with a 14-day retention period', () => {
     template.hasResourceProperties('AWS::SQS::Queue', {
       MessageRetentionPeriod: 1209600,
@@ -103,6 +116,61 @@ describe('DispatchWebhookEngineStack Ingest Lambda and API Gateway', () => {
       RedrivePolicy: Match.objectLike({
         maxReceiveCount: 3,
       }),
+    });
+  });
+
+  describe('DispatchWebhookEngineStack Dispatcher Lambda', () => {
+    test('Dispatcher Lambda function is created with Node 22 runtime and a 30s timeout', () => {
+      template.hasResourceProperties('AWS::Lambda::Function', {
+        Runtime: 'nodejs22.x',
+        Handler: 'index.handler',
+        Timeout: 30,
+      });
+    });
+
+    test('Dispatcher Lambda is triggered by EventsQueue via SQS event source mapping', () => {
+      template.hasResourceProperties('AWS::Lambda::EventSourceMapping', {
+        FunctionResponseTypes: ['ReportBatchItemFailures'],
+      });
+    });
+
+    test('Dispatcher Lambda has least-privilege permission to read from EventsTable', () => {
+      template.hasResourceProperties('AWS::IAM::Policy', {
+        PolicyDocument: {
+          Statement: Match.arrayWith([
+            Match.objectLike({
+              Action: 'dynamodb:GetItem',
+              Effect: 'Allow',
+            }),
+          ]),
+        },
+      });
+    });
+
+    test('Dispatcher Lambda has least-privilege permission to query SubscriptionsTable', () => {
+      template.hasResourceProperties('AWS::IAM::Policy', {
+        PolicyDocument: {
+          Statement: Match.arrayWith([
+            Match.objectLike({
+              Action: 'dynamodb:Query',
+              Effect: 'Allow',
+            }),
+          ]),
+        },
+      });
+    });
+
+    test('Dispatcher Lambda has permission to read the webhook signing secret', () => {
+      template.hasResourceProperties('AWS::IAM::Policy', {
+        PolicyDocument: {
+          Statement: Match.arrayWith([
+            Match.objectLike({
+              Action: Match.arrayWith(['secretsmanager:GetSecretValue']),
+              Effect: 'Allow',
+            }),
+          ]),
+        },
+      });
     });
   });
 });

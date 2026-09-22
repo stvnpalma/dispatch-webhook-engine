@@ -19,6 +19,7 @@
     ]
   },
   "devDependencies": {
+    "@aws-sdk/client-secrets-manager": "^3.1136.0",
     "@eslint/js": "^10.0.1",
     "@swc/core": "^1.15.0",
     "@swc/jest": "^0.2.39",
@@ -30,7 +31,7 @@
     "eslint-config-prettier": "^10.1.8",
     "globals": "^17.7.0",
     "husky": "^9.1.7",
-    "jest": "^30",
+    "jest": "^30.5.2",
     "lint-staged": "^17.2.0",
     "prettier": "^3.9.6",
     "tsx": "^4.23.0",
@@ -42,12 +43,14 @@
     "@aws-sdk/client-sqs": "^3.1131.0",
     "@aws-sdk/lib-dynamodb": "^3.1120.0",
     "aws-cdk-lib": "^2.261.0",
+    "axios": "^1.20.0",
     "constructs": "^10.5.0"
   },
   "allowScripts": {
     "@swc/core@1.15.46": true,
     "esbuild@0.28.1": true,
     "fsevents@2.3.3": true,
-    "unrs-resolver@1.12.2": true
+    "unrs-resolver@1.12.2": true,
+    "@parcel/watcher@2.6.0": true
   }
 }

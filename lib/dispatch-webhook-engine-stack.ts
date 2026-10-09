@@ -1,9 +1,10 @@
 import { Duration } from 'aws-cdk-lib';
 import * as apigatewayv2 from 'aws-cdk-lib/aws-apigatewayv2';
 import * as httpIntegrations from 'aws-cdk-lib/aws-apigatewayv2-integrations';
+import * as cloudwatch from 'aws-cdk-lib/aws-cloudwatch';
 import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
 import { Runtime } from 'aws-cdk-lib/aws-lambda';
-import { SqsEventSource } from 'aws-cdk-lib/aws-lambda-event-sources'; // 1. Import SqsEventSource at the top
+import { SqsEventSource } from 'aws-cdk-lib/aws-lambda-event-sources';
 import { NodejsFunction } from 'aws-cdk-lib/aws-lambda-nodejs';
 import * as logs from 'aws-cdk-lib/aws-logs';
 import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
@@ -38,8 +39,18 @@ export class DispatchWebhookEngineStack extends cdk.Stack {
       removalPolicy: cdk.RemovalPolicy.DESTROY,
     });
 
+    new cloudwatch.Alarm(this, 'EventsDLQAlarm', {
+      metric: this.eventsDLQ.metricApproximateNumberOfMessagesVisible({
+        period: Duration.minutes(3),
+      }),
+      threshold: 1,
+      evaluationPeriods: 1,
+      treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
+      alarmDescription: 'Trigger alarm when messages land in Dead Letter Queue',
+    });
+
     this.eventsQueue = new sqs.Queue(this, 'EventsQueue', {
-      visibilityTimeout: Duration.minutes(2),
+      visibilityTimeout: Duration.minutes(3),
       removalPolicy: cdk.RemovalPolicy.DESTROY,
       deadLetterQueue: {
         queue: this.eventsDLQ,
@@ -130,6 +141,7 @@ export class DispatchWebhookEngineStack extends cdk.Stack {
     this.dispatcherFunction.addEventSource(
       new SqsEventSource(this.eventsQueue, {
         reportBatchItemFailures: true,
+        batchSize: 1,
       })
     );
 

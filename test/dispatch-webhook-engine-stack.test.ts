@@ -112,65 +112,79 @@ describe('DispatchWebhookEngineStack Ingest Lambda and API Gateway', () => {
 
   test('EventsQueue is created with correct visibility timeout and redrive policy', () => {
     template.hasResourceProperties('AWS::SQS::Queue', {
-      VisibilityTimeout: 120,
+      VisibilityTimeout: 180,
       RedrivePolicy: Match.objectLike({
         maxReceiveCount: 3,
       }),
     });
   });
+});
 
-  describe('DispatchWebhookEngineStack Dispatcher Lambda', () => {
-    test('Dispatcher Lambda function is created with Node 22 runtime and a 30s timeout', () => {
-      template.hasResourceProperties('AWS::Lambda::Function', {
-        Runtime: 'nodejs22.x',
-        Handler: 'index.handler',
-        Timeout: 30,
-      });
+describe('DispatchWebhookEngineStack Dispatcher Lambda', () => {
+  test('Dispatcher Lambda function is created with Node 22 runtime and a 30s timeout', () => {
+    template.hasResourceProperties('AWS::Lambda::Function', {
+      Runtime: 'nodejs22.x',
+      Handler: 'index.handler',
+      Timeout: 30,
     });
+  });
 
-    test('Dispatcher Lambda is triggered by EventsQueue via SQS event source mapping', () => {
-      template.hasResourceProperties('AWS::Lambda::EventSourceMapping', {
-        FunctionResponseTypes: ['ReportBatchItemFailures'],
-      });
+  test('Dispatcher Lambda is triggered by EventsQueue via SQS event source mapping', () => {
+    template.hasResourceProperties('AWS::Lambda::EventSourceMapping', {
+      FunctionResponseTypes: ['ReportBatchItemFailures'],
     });
+  });
 
-    test('Dispatcher Lambda has least-privilege permission to read from EventsTable', () => {
-      template.hasResourceProperties('AWS::IAM::Policy', {
-        PolicyDocument: {
-          Statement: Match.arrayWith([
-            Match.objectLike({
-              Action: 'dynamodb:GetItem',
-              Effect: 'Allow',
-            }),
-          ]),
-        },
-      });
+  test('Dispatcher Lambda has least-privilege permission to read from EventsTable', () => {
+    template.hasResourceProperties('AWS::IAM::Policy', {
+      PolicyDocument: {
+        Statement: Match.arrayWith([
+          Match.objectLike({
+            Action: 'dynamodb:GetItem',
+            Effect: 'Allow',
+          }),
+        ]),
+      },
     });
+  });
 
-    test('Dispatcher Lambda has least-privilege permission to query SubscriptionsTable', () => {
-      template.hasResourceProperties('AWS::IAM::Policy', {
-        PolicyDocument: {
-          Statement: Match.arrayWith([
-            Match.objectLike({
-              Action: 'dynamodb:Query',
-              Effect: 'Allow',
-            }),
-          ]),
-        },
-      });
+  test('Dispatcher Lambda has least-privilege permission to query SubscriptionsTable', () => {
+    template.hasResourceProperties('AWS::IAM::Policy', {
+      PolicyDocument: {
+        Statement: Match.arrayWith([
+          Match.objectLike({
+            Action: 'dynamodb:Query',
+            Effect: 'Allow',
+          }),
+        ]),
+      },
     });
+  });
 
-    test('Dispatcher Lambda has permission to read the webhook signing secret', () => {
-      template.hasResourceProperties('AWS::IAM::Policy', {
-        PolicyDocument: {
-          Statement: Match.arrayWith([
-            Match.objectLike({
-              Action: Match.arrayWith(['secretsmanager:GetSecretValue']),
-              Effect: 'Allow',
-            }),
-          ]),
-        },
-      });
+  test('Dispatcher Lambda has permission to read the webhook signing secret', () => {
+    template.hasResourceProperties('AWS::IAM::Policy', {
+      PolicyDocument: {
+        Statement: Match.arrayWith([
+          Match.objectLike({
+            Action: Match.arrayWith(['secretsmanager:GetSecretValue']),
+            Effect: 'Allow',
+          }),
+        ]),
+      },
+    });
+  });
+});
+
+describe('DispatchWebhookEngineStack CloudWatch Alarms', () => {
+  test('EventsDLQ alarm is created with the correct threshold and evaluation periods', () => {
+    template.resourceCountIs('AWS::CloudWatch::Alarm', 1);
+
+    template.hasResourceProperties('AWS::CloudWatch::Alarm', {
+      Threshold: 1,
+      EvaluationPeriods: 1,
+      MetricName: 'ApproximateNumberOfMessagesVisible',
+      Namespace: 'AWS/SQS',
+      TreatMissingData: 'notBreaching',
     });
   });
 });

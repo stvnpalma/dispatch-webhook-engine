@@ -11,6 +11,7 @@ import {
 import { SQSHandler } from 'aws-lambda';
 import axios from 'axios';
 import * as crypto from 'crypto';
+import { retryWithBackoff } from './retry';
 
 // ==========================================
 // 1. CONFIGURATION & ENVIRONMENT GUARDS
@@ -149,33 +150,49 @@ export const handler: SQSHandler = async (event) => {
         continue;
       }
 
-      let recordFailed = false;
-      for (const sub of subscribers) {
+      // 1. Map each subscriber into a delivery promise
+      const deliveryPromises = subscribers.map(async (sub) => {
         if (typeof sub.url !== 'string') {
           writeLog('ERROR', 'Subscription has invalid URL type', { eventId });
-          continue;
+          return;
         }
 
-        try {
-          const signature = signPayload(payload, secret);
+        const signature = signPayload(payload, secret);
+
+        // 2. Wrap the Axios call in our retry helper
+        await retryWithBackoff(async () => {
           await axios.post(sub.url, JSON.parse(payload), {
             headers: { 'X-Webhook-Signature': signature },
             timeout: 5000,
           });
-        } catch (error) {
+        });
+      });
+
+      // 3. Fire all requests in parallel and wait for all to settle
+      const results = await Promise.allSettled(deliveryPromises);
+
+      // 4. Check results to see if any subscriber completely failed
+      let recordFailed = false;
+      for (let i = 0; i < results.length; i++) {
+        const result = results[i];
+        if (result.status === 'rejected') {
+          recordFailed = true;
+          const error: unknown = result.reason; // Explicitly typed unknown
+
           if (axios.isAxiosError(error)) {
-            writeLog('ERROR', 'Failed to deliver webhook', {
-              url: sub.url,
+            writeLog('ERROR', 'Failed to deliver webhook after retries', {
+              url: subscribers[i].url,
+              eventId,
               status: error.response?.status,
               errorMessage: error.message,
             });
           } else {
             writeLog('ERROR', 'Unexpected error delivering webhook', {
-              url: sub.url,
+              url: subscribers[i].url,
+              eventId,
               error: error instanceof Error ? error.message : String(error),
             });
           }
-          recordFailed = true;
         }
       }
 

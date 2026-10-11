@@ -1,7 +1,9 @@
 import { Duration } from 'aws-cdk-lib';
 import * as apigatewayv2 from 'aws-cdk-lib/aws-apigatewayv2';
+import * as authorizers from 'aws-cdk-lib/aws-apigatewayv2-authorizers';
 import * as httpIntegrations from 'aws-cdk-lib/aws-apigatewayv2-integrations';
 import * as cloudwatch from 'aws-cdk-lib/aws-cloudwatch';
+import * as cognito from 'aws-cdk-lib/aws-cognito';
 import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
 import { Runtime } from 'aws-cdk-lib/aws-lambda';
 import { SqsEventSource } from 'aws-cdk-lib/aws-lambda-event-sources';
@@ -21,6 +23,8 @@ export class DispatchWebhookEngineStack extends cdk.Stack {
   public readonly eventsDLQ: sqs.Queue;
   public readonly dispatcherFunction: NodejsFunction;
   public readonly webhookSecret: secretsmanager.Secret;
+  public readonly userPool: cognito.UserPool;
+  public readonly userPoolClient: cognito.UserPoolClient;
 
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
     super(scope, id, props);
@@ -149,6 +153,27 @@ export class DispatchWebhookEngineStack extends cdk.Stack {
       apiName: 'dispatch-webhook-engine-api',
     });
 
+    this.userPool = new cognito.UserPool(this, 'WebhookUserPool', {
+      selfSignUpEnabled: false,
+      removalPolicy: cdk.RemovalPolicy.DESTROY,
+    });
+
+    this.userPoolClient = this.userPool.addClient('WebhookUserClient', {
+      authFlows: {
+        userPassword: true,
+      },
+      generateSecret: false,
+      disableOAuth: true,
+    });
+
+    const userPoolAuthorizer = new authorizers.HttpUserPoolAuthorizer(
+      'CognitoAuthorizer',
+      this.userPool,
+      {
+        userPoolClients: [this.userPoolClient],
+      }
+    );
+
     this.httpApi.addRoutes({
       path: '/events',
       methods: [apigatewayv2.HttpMethod.POST],
@@ -156,6 +181,19 @@ export class DispatchWebhookEngineStack extends cdk.Stack {
         'IngestLambdaIntegration',
         this.ingestFunction
       ),
+      authorizer: userPoolAuthorizer,
+    });
+
+    new cdk.CfnOutput(this, 'UserPoolIdOutput', {
+      value: this.userPool.userPoolId,
+    });
+
+    new cdk.CfnOutput(this, 'UserPoolClientIdOutput', {
+      value: this.userPoolClient.userPoolClientId,
+    });
+
+    new cdk.CfnOutput(this, 'ApiUrlOutput', {
+      value: this.httpApi.apiEndpoint,
     });
   }
 }

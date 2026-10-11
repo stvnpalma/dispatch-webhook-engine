@@ -4,10 +4,25 @@
     "description": "API collection for the Dispatch Webhook Engine serverless system.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{accessToken}}",
+        "type": "string"
+      }
+    ]
+  },
   "variable": [
     {
       "key": "baseUrl",
       "value": "https://REPLACE-WITH-DEPLOYED-API-URL",
+      "type": "string"
+    },
+    {
+      "key": "accessToken",
+      "value": "",
       "type": "string"
     }
   ],

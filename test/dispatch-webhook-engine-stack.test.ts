@@ -188,3 +188,51 @@ describe('DispatchWebhookEngineStack CloudWatch Alarms', () => {
     });
   });
 });
+
+describe('DispatchWebhookEngineStack Cognito Authentication', () => {
+  test('User Pool exists and only admins can create users', () => {
+    template.resourceCountIs('AWS::Cognito::UserPool', 1);
+    template.hasResourceProperties('AWS::Cognito::UserPool', {
+      AdminCreateUserConfig: { AllowAdminCreateUserOnly: true },
+    });
+  });
+
+  test('User Pool Client has OAuth flows disabled', () => {
+    template.hasResourceProperties('AWS::Cognito::UserPoolClient', {
+      AllowedOAuthFlows: Match.absent(),
+      CallbackURLs: Match.absent(),
+    });
+  });
+
+  test('User Pool is deleted with the stack', () => {
+    template.hasResource('AWS::Cognito::UserPool', {
+      DeletionPolicy: 'Delete',
+      UpdateReplacePolicy: 'Delete',
+    });
+  });
+
+  test('User Pool Client has no secret and allows password auth', () => {
+    template.hasResourceProperties('AWS::Cognito::UserPoolClient', {
+      GenerateSecret: false,
+      ExplicitAuthFlows: Match.arrayWith(['ALLOW_USER_PASSWORD_AUTH']),
+    });
+  });
+
+  test('JWT authorizer is configured with an issuer and audience', () => {
+    template.hasResourceProperties('AWS::ApiGatewayV2::Authorizer', {
+      AuthorizerType: 'JWT',
+      IdentitySource: ['$request.header.Authorization'],
+      JwtConfiguration: {
+        Issuer: Match.anyValue(),
+        Audience: Match.anyValue(),
+      },
+    });
+  });
+
+  test('POST /events route requires JWT authorization', () => {
+    template.hasResourceProperties('AWS::ApiGatewayV2::Route', {
+      RouteKey: 'POST /events',
+      AuthorizationType: 'JWT',
+    });
+  });
+});

@@ -25,6 +25,9 @@ export class DispatchWebhookEngineStack extends cdk.Stack {
   public readonly webhookSecret: secretsmanager.Secret;
   public readonly userPool: cognito.UserPool;
   public readonly userPoolClient: cognito.UserPoolClient;
+  public readonly createSubscriptionFn: NodejsFunction;
+  public readonly listSubscriptionsFn: NodejsFunction;
+  public readonly deleteSubscriptionFn: NodejsFunction;
 
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
     super(scope, id, props);
@@ -174,6 +177,24 @@ export class DispatchWebhookEngineStack extends cdk.Stack {
       }
     );
 
+    this.createSubscriptionFn = this.buildSubscriptionFunction(
+      'CreateSubscriptionFunction',
+      'lambda/subscriptions/create.ts',
+      'dynamodb:PutItem'
+    );
+
+    this.listSubscriptionsFn = this.buildSubscriptionFunction(
+      'ListSubscriptionsFunction',
+      'lambda/subscriptions/list.ts',
+      'dynamodb:Query'
+    );
+
+    this.deleteSubscriptionFn = this.buildSubscriptionFunction(
+      'DeleteSubscriptionFunction',
+      'lambda/subscriptions/delete.ts',
+      'dynamodb:DeleteItem'
+    );
+
     this.httpApi.addRoutes({
       path: '/events',
       methods: [apigatewayv2.HttpMethod.POST],
@@ -184,6 +205,35 @@ export class DispatchWebhookEngineStack extends cdk.Stack {
       authorizer: userPoolAuthorizer,
     });
 
+    this.httpApi.addRoutes({
+      path: '/subscriptions',
+      methods: [apigatewayv2.HttpMethod.POST],
+      integration: new httpIntegrations.HttpLambdaIntegration(
+        'CreateSubscriptionIntegration',
+        this.createSubscriptionFn
+      ),
+      authorizer: userPoolAuthorizer,
+    });
+
+    this.httpApi.addRoutes({
+      path: '/subscriptions',
+      methods: [apigatewayv2.HttpMethod.GET],
+      integration: new httpIntegrations.HttpLambdaIntegration(
+        'ListSubscriptionsIntegration',
+        this.listSubscriptionsFn
+      ),
+      authorizer: userPoolAuthorizer,
+    });
+
+    this.httpApi.addRoutes({
+      path: '/subscriptions/{eventType}',
+      methods: [apigatewayv2.HttpMethod.DELETE],
+      integration: new httpIntegrations.HttpLambdaIntegration(
+        'DeleteSubscriptionIntegration',
+        this.deleteSubscriptionFn
+      ),
+      authorizer: userPoolAuthorizer,
+    });
     new cdk.CfnOutput(this, 'UserPoolIdOutput', {
       value: this.userPool.userPoolId,
     });
@@ -195,5 +245,28 @@ export class DispatchWebhookEngineStack extends cdk.Stack {
     new cdk.CfnOutput(this, 'ApiUrlOutput', {
       value: this.httpApi.apiEndpoint,
     });
+  }
+
+  private buildSubscriptionFunction(
+    id: string,
+    entry: string,
+    action: string
+  ): NodejsFunction {
+    const logGroup = new logs.LogGroup(this, `${id}LogGroup`, {
+      retention: logs.RetentionDays.ONE_WEEK,
+      removalPolicy: cdk.RemovalPolicy.DESTROY,
+    });
+
+    const fn = new NodejsFunction(this, id, {
+      entry,
+      runtime: Runtime.NODEJS_22_X,
+      logGroup,
+      environment: {
+        SUBSCRIPTIONS_TABLE_NAME: this.subscriptionsTable.tableName,
+      },
+    });
+
+    this.subscriptionsTable.grant(fn, action);
+    return fn;
   }
 }

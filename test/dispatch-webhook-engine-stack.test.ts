@@ -1,11 +1,19 @@
 import * as cdk from 'aws-cdk-lib';
 import { Match, Template } from 'aws-cdk-lib/assertions';
+import type { NodejsFunction } from 'aws-cdk-lib/aws-lambda-nodejs';
 import { DispatchWebhookEngineStack } from '../lib/dispatch-webhook-engine-stack';
 
 // Hoisted once for shared use across all describe blocks
 const app = new cdk.App();
 const stack = new DispatchWebhookEngineStack(app, 'TestStack');
 const template = Template.fromStack(stack);
+
+function roleRefOf(fn: NodejsFunction) {
+  if (!fn.role) {
+    throw new Error('Function has no execution role');
+  }
+  return stack.resolve(fn.role.roleName);
+}
 
 describe('DispatchWebhookEngineStack DynamoDB Tables', () => {
   test('synthesizes exactly two DynamoDB tables', () => {
@@ -234,5 +242,52 @@ describe('DispatchWebhookEngineStack Cognito Authentication', () => {
       RouteKey: 'POST /events',
       AuthorizationType: 'JWT',
     });
+  });
+});
+
+describe('DispatchWebhookEngineStack Subscription API', () => {
+  test.each([
+    {
+      name: 'create',
+      fn: stack.createSubscriptionFn,
+      action: 'dynamodb:PutItem',
+    },
+    { name: 'list', fn: stack.listSubscriptionsFn, action: 'dynamodb:Query' },
+    {
+      name: 'delete',
+      fn: stack.deleteSubscriptionFn,
+      action: 'dynamodb:DeleteItem',
+    },
+  ])(
+    '$name function role has exactly one DynamoDB permission: $action',
+    ({ fn, action }) => {
+      template.hasResourceProperties('AWS::IAM::Policy', {
+        Roles: [roleRefOf(fn)],
+        PolicyDocument: {
+          Statement: [Match.objectLike({ Action: action, Effect: 'Allow' })],
+        },
+      });
+    }
+  );
+
+  test.each([
+    'POST /subscriptions',
+    'GET /subscriptions',
+    'DELETE /subscriptions/{eventType}',
+  ])('route %s requires JWT authorization', (routeKey) => {
+    template.hasResourceProperties('AWS::ApiGatewayV2::Route', {
+      RouteKey: routeKey,
+      AuthorizationType: 'JWT',
+    });
+  });
+
+  test('every route in the API requires JWT authorization', () => {
+    const routes = Object.values(
+      template.findResources('AWS::ApiGatewayV2::Route')
+    );
+    expect(routes.length).toBe(4);
+    expect(routes.every((r) => r.Properties.AuthorizationType === 'JWT')).toBe(
+      true
+    );
   });
 });

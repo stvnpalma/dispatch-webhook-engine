@@ -11,6 +11,7 @@ import {
 import { SQSHandler } from 'aws-lambda';
 import axios from 'axios';
 import * as crypto from 'crypto';
+import { buildDeliveryHeaders } from './headers';
 import { retryWithBackoff } from './retry';
 
 // ==========================================
@@ -158,11 +159,12 @@ export const handler: SQSHandler = async (event) => {
         }
 
         const signature = signPayload(payload, secret);
+        const headers = buildDeliveryHeaders(signature, eventId);
 
         // 2. Wrap the Axios call in our retry helper
         await retryWithBackoff(async () => {
           await axios.post(sub.url, JSON.parse(payload), {
-            headers: { 'X-Webhook-Signature': signature },
+            headers,
             timeout: 5000,
           });
         });

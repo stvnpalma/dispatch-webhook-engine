@@ -245,6 +245,10 @@ export class DispatchWebhookEngineStack extends cdk.Stack {
     new cdk.CfnOutput(this, 'ApiUrlOutput', {
       value: this.httpApi.apiEndpoint,
     });
+
+    new cdk.CfnOutput(this, 'WebhookSecretArnOutput', {
+      value: this.webhookSecret.secretArn,
+    });
   }
 
   private buildSubscriptionFunction(

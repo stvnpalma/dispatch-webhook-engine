@@ -291,3 +291,11 @@ describe('DispatchWebhookEngineStack Subscription API', () => {
     );
   });
 });
+
+describe('DispatchWebhookEngineStack Outputs', () => {
+  test('WebhookSecretArnOutput exposes the signing secret ARN', () => {
+    template.hasOutput('WebhookSecretArnOutput', {
+      Value: { Ref: Match.stringLikeRegexp('^WebhookSigningSecret') },
+    });
+  });
+});

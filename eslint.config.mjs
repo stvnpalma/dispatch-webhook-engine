@@ -24,7 +24,7 @@ export default defineConfig([
 
   // 4. Test File Safeguards
   {
-    files: ['test/**/*.ts'],
+    files: ['test/**/*.ts', 'integration/**/*.ts'],
     rules: {
       'no-restricted-imports': [
         'error',

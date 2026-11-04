@@ -56,17 +56,33 @@ Remember that these local hooks mirror our CI standards. Bypassing the hook loca
 
 While pre-commit hooks catch issues automatically on commit, you should run these commands manually during development—especially before opening a Pull Request—to ensure your code is fully sound:
 
-- **Build**: `npm run build` (compiles TypeScript to JavaScript)
+- **Build**: `npm run build` (type-checks the project; no output files are emitted)
 - **Type-Check:** `npm run typecheck` (validates types without emitting files)
-- **Watch Mode:** `npm run watch` (compiles automatically on file changes)
+- **Watch Mode:** `npm run watch` (type-checks the project; no output files are emitted)
 - **Run Tests:** `npm run test` (executes the test suite)
 - **Run Linter:** `npm run lint` (checks code against style and safety rules)
 - **Synthesize CloudFormation:** `npx cdk synth` (generates the CloudFormation template)
 - **Compare Stack State** `npx cdk diff` (compares deployed stack with local state)
 - **Deploy Stack:** `npx cdk deploy` (deploys infrastructure changes to AWS)
+- **Format check:** `npm run format:check` (verifies Prettier formatting)
+- **Integration tests:** `npm run test:integration` (needs a deployed stack and `.env.local`; see the README)
 
 ---
 
 ### 6. CI as the Authoritative Gate
 
 While local hooks and commands provide fast, instantaneous feedback, they are ultimately bypassable on your machine. The remote CI pipeline serves as the final, non-bypassable source of truth; because GitHub branch protection rules require these exact checks to pass successfully in the remote environment before any code can be merged into main, the pipeline ensures that no unverified or broken code ever reaches production.
+
+---
+
+### 7. Releases
+
+- A release is a pull request from `dev` to `main`, squash-merged. Squash is the
+  only enabled merge method, and `main` requires linear history.
+- After a release, `main` and `dev` have identical contents but different
+  histories, because the squash creates one commit on `main` that `dev` doesn't
+  have. Check with `git diff origin/main origin/dev --stat` (it should print
+  nothing). The next release PR may list many commits. If it shows conflicts,
+  sync `dev` with `main` before merging.
+- Before tagging, smoke-test a fresh deploy from `main` by following the README,
+  then tag `vX.Y.Z` (annotated) on `main` and publish a GitHub Release.

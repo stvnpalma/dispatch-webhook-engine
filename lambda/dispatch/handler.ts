@@ -11,6 +11,7 @@ import {
 import { SQSHandler } from 'aws-lambda';
 import axios from 'axios';
 import * as crypto from 'crypto';
+import { parseTraceId } from '../shared/trace';
 import { buildDeliveryHeaders } from './headers';
 import { retryWithBackoff } from './retry';
 
@@ -57,6 +58,7 @@ function writeLog(
       level,
       message,
       timestamp: new Date().toISOString(),
+      traceId: parseTraceId(process.env._X_AMZN_TRACE_ID),
       ...meta,
     })
   );
@@ -200,6 +202,11 @@ export const handler: SQSHandler = async (event) => {
 
       if (recordFailed) {
         failedMessageIds.push(record.messageId);
+      } else {
+        writeLog('INFO', 'Event delivered to all subscribers', {
+          eventId,
+          subscriberCount: subscribers.length,
+        });
       }
     } catch (error) {
       writeLog('ERROR', 'Failed to process SQS record', {

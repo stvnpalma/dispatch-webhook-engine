@@ -299,3 +299,53 @@ describe('DispatchWebhookEngineStack Outputs', () => {
     });
   });
 });
+
+describe('Tracing', () => {
+  test('Ingest function has active tracing', () => {
+    const app = new cdk.App();
+    const stack = new DispatchWebhookEngineStack(app, 'TestStack');
+    const template = Template.fromStack(stack);
+
+    template.hasResourceProperties('AWS::Lambda::Function', {
+      Environment: {
+        Variables: Match.objectLike({ EVENTS_QUEUE_URL: Match.anyValue() }),
+      },
+      TracingConfig: { Mode: 'Active' },
+    });
+  });
+
+  test('Dispatcher function has active tracing', () => {
+    const app = new cdk.App();
+    const stack = new DispatchWebhookEngineStack(app, 'TestStack');
+    const template = Template.fromStack(stack);
+
+    template.hasResourceProperties('AWS::Lambda::Function', {
+      Environment: {
+        Variables: Match.objectLike({
+          WEBHOOK_SECRET_ARN: Match.anyValue(),
+        }),
+      },
+      TracingConfig: { Mode: 'Active' },
+    });
+  });
+
+  test('exactly two functions are traced', () => {
+    const app = new cdk.App();
+    const stack = new DispatchWebhookEngineStack(app, 'TestStack');
+    const template = Template.fromStack(stack);
+
+    const functions = template.findResources('AWS::Lambda::Function');
+    const activeTracedCount = Object.values(functions).filter((resource) => {
+      const typedResource = resource as {
+        Properties?: {
+          TracingConfig?: {
+            Mode?: string;
+          };
+        };
+      };
+      return typedResource.Properties?.TracingConfig?.Mode === 'Active';
+    }).length;
+
+    expect(activeTracedCount).toBe(2);
+  });
+});

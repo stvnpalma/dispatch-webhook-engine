@@ -3,10 +3,26 @@ import { SQSClient, SendMessageCommand } from '@aws-sdk/client-sqs';
 import { DynamoDBDocumentClient, PutCommand } from '@aws-sdk/lib-dynamodb';
 import { APIGatewayProxyHandlerV2 } from 'aws-lambda';
 import crypto from 'crypto';
+import { buildTraceAttributes, parseTraceId } from '../shared/trace';
 
 const client = new DynamoDBClient({});
 const docClient = DynamoDBDocumentClient.from(client);
 const sqsClient = new SQSClient({});
+
+function writeLog(
+  level: 'info' | 'error',
+  message: string,
+  meta?: Record<string, unknown>
+) {
+  console.log(
+    JSON.stringify({
+      level,
+      message,
+      traceId: parseTraceId(process.env._X_AMZN_TRACE_ID),
+      ...meta,
+    })
+  );
+}
 
 export const handler: APIGatewayProxyHandlerV2 = async (event) => {
   const rawBody = event.body;
@@ -22,13 +38,9 @@ export const handler: APIGatewayProxyHandlerV2 = async (event) => {
   try {
     body = JSON.parse(rawBody);
   } catch (error) {
-    console.log(
-      JSON.stringify({
-        level: 'error',
-        message: 'Failed to parse request body as JSON',
-        error: error instanceof Error ? error.message : String(error),
-      })
-    );
+    writeLog('error', 'Failed to parse request body as JSON', {
+      error: error instanceof Error ? error.message : String(error),
+    });
 
     return {
       statusCode: 400,
@@ -44,14 +56,10 @@ export const handler: APIGatewayProxyHandlerV2 = async (event) => {
     payload === null ||
     Array.isArray(payload)
   ) {
-    console.log(
-      JSON.stringify({
-        level: 'error',
-        message: 'Validation failed: invalid eventType or payload',
-        receivedEventTypeType: typeof eventType,
-        receivedPayloadType: Array.isArray(payload) ? 'array' : typeof payload,
-      })
-    );
+    writeLog('error', 'Validation failed: invalid eventType or payload', {
+      receivedEventTypeType: typeof eventType,
+      receivedPayloadType: Array.isArray(payload) ? 'array' : typeof payload,
+    });
 
     return {
       statusCode: 400,
@@ -66,12 +74,7 @@ export const handler: APIGatewayProxyHandlerV2 = async (event) => {
   const queueUrl = process.env.EVENTS_QUEUE_URL;
 
   if (!tableName || !queueUrl) {
-    console.log(
-      JSON.stringify({
-        level: 'error',
-        message: 'Configuration error: Missing environment variables',
-      })
-    );
+    writeLog('error', 'Configuration error: Missing environment variables');
 
     return {
       statusCode: 500,
@@ -97,27 +100,22 @@ export const handler: APIGatewayProxyHandlerV2 = async (event) => {
       })
     );
 
-    console.log(
-      JSON.stringify({
-        level: 'info',
-        message: 'Event successfully ingested and saved to DynamoDB',
-        eventId,
-      })
-    );
+    writeLog('info', 'Event successfully ingested and saved to DynamoDB', {
+      eventId,
+    });
   } catch (error) {
-    console.log(
-      JSON.stringify({
-        level: 'error',
-        message: 'Failed to write event to DynamoDB',
-        error: error instanceof Error ? error.message : String(error),
-      })
-    );
+    writeLog('error', 'Failed to write event to DynamoDB', {
+      error: error instanceof Error ? error.message : String(error),
+    });
 
     return {
       statusCode: 500,
       body: JSON.stringify({ error: 'Internal server error' }),
     };
   }
+
+  // Use Lambda's execution environment trace ID for propagation
+  const traceHeader = process.env._X_AMZN_TRACE_ID;
 
   // 2. SQS Send (Independent Try/Catch)
   try {
@@ -125,24 +123,17 @@ export const handler: APIGatewayProxyHandlerV2 = async (event) => {
       new SendMessageCommand({
         QueueUrl: queueUrl,
         MessageBody: JSON.stringify({ eventId }),
+        ...buildTraceAttributes(traceHeader),
       })
     );
 
-    console.log(
-      JSON.stringify({
-        level: 'info',
-        message: 'Event ID successfully sent to SQS queue',
-        eventId,
-      })
-    );
+    writeLog('info', 'Event ID successfully sent to SQS queue', {
+      eventId,
+    });
   } catch (error) {
-    console.log(
-      JSON.stringify({
-        level: 'error',
-        message: 'Failed to send event ID to SQS queue',
-        error: error instanceof Error ? error.message : String(error),
-      })
-    );
+    writeLog('error', 'Failed to send event ID to SQS queue', {
+      error: error instanceof Error ? error.message : String(error),
+    });
 
     return {
       statusCode: 500,
@@ -150,7 +141,6 @@ export const handler: APIGatewayProxyHandlerV2 = async (event) => {
     };
   }
 
-  // 3. Success Response
   return {
     statusCode: 202,
     body: JSON.stringify({ eventId }),

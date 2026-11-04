@@ -5,7 +5,7 @@ import * as httpIntegrations from 'aws-cdk-lib/aws-apigatewayv2-integrations';
 import * as cloudwatch from 'aws-cdk-lib/aws-cloudwatch';
 import * as cognito from 'aws-cdk-lib/aws-cognito';
 import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
-import { Runtime } from 'aws-cdk-lib/aws-lambda';
+import { Runtime, Tracing } from 'aws-cdk-lib/aws-lambda';
 import { SqsEventSource } from 'aws-cdk-lib/aws-lambda-event-sources';
 import { NodejsFunction } from 'aws-cdk-lib/aws-lambda-nodejs';
 import * as logs from 'aws-cdk-lib/aws-logs';
@@ -107,9 +107,13 @@ export class DispatchWebhookEngineStack extends cdk.Stack {
       removalPolicy: cdk.RemovalPolicy.DESTROY,
     });
 
+    // Active tracing adds xray:PutTraceSegments / PutTelemetryRecords on
+    // Resource '*' (X-Ray has no resource-level permissions). Documented
+    // exception to the no-wildcard rule.
     this.ingestFunction = new NodejsFunction(this, 'IngestWebhookLambda', {
       entry: 'lambda/ingest/handler.ts',
       runtime: Runtime.NODEJS_22_X,
+      tracing: Tracing.ACTIVE,
       logGroup: logGroup,
       environment: {
         EVENTS_TABLE_NAME: this.eventsTable.tableName,
@@ -129,10 +133,14 @@ export class DispatchWebhookEngineStack extends cdk.Stack {
       }
     );
 
+    // Active tracing adds xray:PutTraceSegments / PutTelemetryRecords on
+    // Resource '*' (X-Ray has no resource-level permissions). Documented
+    // exception to the no-wildcard rule.
     this.dispatcherFunction = new NodejsFunction(this, 'DispatcherLambda', {
       entry: 'lambda/dispatch/handler.ts',
       runtime: Runtime.NODEJS_22_X,
       timeout: Duration.seconds(30),
+      tracing: Tracing.ACTIVE,
       logGroup: dispatcherLogGroup,
       environment: {
         EVENTS_TABLE_NAME: this.eventsTable.tableName,

@@ -3,6 +3,7 @@ import { SQSClient, SendMessageCommand } from '@aws-sdk/client-sqs';
 import { DynamoDBDocumentClient, PutCommand } from '@aws-sdk/lib-dynamodb';
 import { APIGatewayProxyHandlerV2 } from 'aws-lambda';
 import crypto from 'crypto';
+import { jsonResponse } from '../shared/response';
 import { buildTraceAttributes, parseTraceId } from '../shared/trace';
 
 const client = new DynamoDBClient({});
@@ -28,10 +29,7 @@ export const handler: APIGatewayProxyHandlerV2 = async (event) => {
   const rawBody = event.body;
 
   if (!rawBody) {
-    return {
-      statusCode: 400,
-      body: JSON.stringify({ error: 'Missing request body' }),
-    };
+    return jsonResponse(400, { error: 'Missing request body' });
   }
 
   let body: Record<string, unknown>;
@@ -42,10 +40,7 @@ export const handler: APIGatewayProxyHandlerV2 = async (event) => {
       error: error instanceof Error ? error.message : String(error),
     });
 
-    return {
-      statusCode: 400,
-      body: JSON.stringify({ error: 'Invalid JSON format' }),
-    };
+    return jsonResponse(400, { error: 'Invalid JSON format' });
   }
 
   const { eventType, payload } = body;
@@ -61,13 +56,10 @@ export const handler: APIGatewayProxyHandlerV2 = async (event) => {
       receivedPayloadType: Array.isArray(payload) ? 'array' : typeof payload,
     });
 
-    return {
-      statusCode: 400,
-      body: JSON.stringify({
-        error:
-          "Invalid request: 'eventType' must be a string and 'payload' must be an object.",
-      }),
-    };
+    return jsonResponse(400, {
+      error:
+        "Invalid request: 'eventType' must be a string and 'payload' must be an object.",
+    });
   }
 
   const tableName = process.env.EVENTS_TABLE_NAME;
@@ -76,10 +68,7 @@ export const handler: APIGatewayProxyHandlerV2 = async (event) => {
   if (!tableName || !queueUrl) {
     writeLog('error', 'Configuration error: Missing environment variables');
 
-    return {
-      statusCode: 500,
-      body: JSON.stringify({ error: 'Internal server error' }),
-    };
+    return jsonResponse(500, { error: 'Internal server error' });
   }
 
   const eventId = crypto.randomUUID();
@@ -108,10 +97,7 @@ export const handler: APIGatewayProxyHandlerV2 = async (event) => {
       error: error instanceof Error ? error.message : String(error),
     });
 
-    return {
-      statusCode: 500,
-      body: JSON.stringify({ error: 'Internal server error' }),
-    };
+    return jsonResponse(500, { error: 'Internal server error' });
   }
 
   // Use Lambda's execution environment trace ID for propagation
@@ -135,14 +121,8 @@ export const handler: APIGatewayProxyHandlerV2 = async (event) => {
       error: error instanceof Error ? error.message : String(error),
     });
 
-    return {
-      statusCode: 500,
-      body: JSON.stringify({ error: 'Internal server error' }),
-    };
+    return jsonResponse(500, { error: 'Internal server error' });
   }
 
-  return {
-    statusCode: 202,
-    body: JSON.stringify({ eventId }),
-  };
+  return jsonResponse(202, { eventId });
 };

@@ -49,6 +49,58 @@
       }
     },
     {
+      "name": "POST /events - Valid Request with Idempotency-Key",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Idempotency-Key",
+            "value": "order-12345-shipped"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"eventType\": \"order.shipped\",\n  \"payload\": {\n    \"orderId\": \"12345\",\n    \"trackingNumber\": \"ABC123\"\n  }\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/events",
+          "host": ["{{baseUrl}}"],
+          "path": ["events"]
+        },
+        "description": "Send this request twice. Both responses return 202 with the same eventId, and only one event is created."
+      }
+    },
+    {
+      "name": "POST /events - Invalid Idempotency-Key",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Idempotency-Key",
+            "value": "bad key!"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"eventType\": \"order.shipped\",\n  \"payload\": {\n    \"orderId\": \"12345\"\n  }\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/events",
+          "host": ["{{baseUrl}}"],
+          "path": ["events"]
+        },
+        "description": "Keys may only contain A-Z a-z 0-9 . _ : - and be 1 to 128 characters. Expect 400."
+      }
+    },
+    {
       "name": "POST /events - Invalid Request (missing eventType)",
       "request": {
         "method": "POST",

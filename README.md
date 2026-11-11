@@ -15,13 +15,15 @@ least-privilege IAM, and verification against a real deployed stack.
   only by an administrator.
 - **Fast, durable ingestion.** `POST /events` writes to DynamoDB, queues the event
   in SQS, and returns `202`. Slow or failing subscribers never affect the API.
+- **Safe retries.** An optional `Idempotency-Key` header makes event submission
+  safe to retry: the same key returns the same event instead of creating a new one.
 - **Signed delivery.** Each webhook carries an HMAC-SHA256 signature and a stable
   `X-Webhook-Event-Id` so subscribers can verify and deduplicate.
 - **Failure handling.** Retries with exponential backoff for transient errors,
   per-message retry through SQS, a dead-letter queue, and a CloudWatch alarm on it.
 - **Least-privilege IAM.** One role per Lambda, limited to the actions that function
   needs. The only account-wide wildcard is X-Ray's, documented below.
-- **Tested at two levels.** 79 unit tests and a 10-test integration suite that runs
+- **Tested at two levels.** 93 unit tests and a 17-test integration suite that runs
   against a deployed stack, including an end-to-end delivery check.
 - **Observable.** Structured JSON logs and X-Ray tracing, with an `eventId` that
   correlates the functions.
@@ -66,6 +68,8 @@ flowchart LR
    before any code runs.
 2. The Ingest Lambda validates the body, stores the event in DynamoDB with status
    `PENDING`, and sends its `eventId` to SQS. It returns `202` with the `eventId`.
+   If the request carries an `Idempotency-Key`, a retry of it finds the stored
+   event and returns the same `eventId` instead of creating a new one.
 3. The Dispatcher Lambda receives the message, loads the event, and looks up
    subscribers for its event type through a global secondary index.
 4. For each subscriber it sends an HTTPS `POST` with the payload, signed with a
@@ -93,10 +97,18 @@ no X-Ray support, so traces begin at the Ingest function.
 
 **A failed enqueue returns `500`.** If the event is stored but the SQS send fails,
 Ingest returns `500` and doesn't claim success for an event that won't be
-delivered. I verified this on a live stack by inducing the failure. The cost is
-that a client retry creates a new event, since IDs are generated server-side, and
-the first event remains stored as `PENDING`. An idempotency key would fix this
-(see "What I'd do next").
+delivered. I verified this on a live stack by inducing the failure. Without an
+idempotency key, a client retry creates a new event and the first one stays stored
+as `PENDING`. With an `Idempotency-Key`, the retry finds the stored event,
+re-enqueues it, and returns the same `eventId`.
+
+**Idempotency keys scoped to the caller.** The optional `Idempotency-Key` header
+makes event creation safe to retry. The event ID becomes a SHA-256 hash of the
+caller's JWT subject and the key, and the write is conditional on that ID not
+already existing. A retry finds the stored event, sends it to the queue again, and
+returns the same `eventId`. Scoping by caller means two users who send the same key
+get different events. The design needs no new table or IAM permission, at the cost
+of the limits listed under "Idempotent event submission".
 
 **Partial batch failure with batch size 1.** The Dispatcher reports failed messages
 individually, so only those are retried. Batch size 1 keeps the worst-case run time
@@ -125,18 +137,50 @@ return `500`) was caught by running against the deployed stack.
 ## API reference
 
 All routes require `Authorization: Bearer <access token>`. Errors: `400` for invalid
-input, `401` for a missing or invalid token, `500` for server errors.
+input (including an invalid `Idempotency-Key`), `401` for a missing or invalid
+token, `500` for server errors. Responses from the functions are JSON.
 
-| Method   | Path                         | Description                                                            | Success                           |
-| -------- | ---------------------------- | ---------------------------------------------------------------------- | --------------------------------- |
-| `POST`   | `/events`                    | Submit an event: `{ "eventType": "...", "payload": { ... } }`          | `202` with `{ "eventId": "..." }` |
-| `POST`   | `/subscriptions`             | Register a webhook URL: `{ "eventType": "...", "url": "https://..." }` | `201`                             |
-| `GET`    | `/subscriptions`             | List your subscriptions                                                | `200`                             |
-| `DELETE` | `/subscriptions/{eventType}` | Remove a subscription (`204` even if none existed)                     | `204`                             |
+| Method   | Path                         | Description                                                                                       | Success                           |
+| -------- | ---------------------------- | ------------------------------------------------------------------------------------------------- | --------------------------------- |
+| `POST`   | `/events`                    | Submit an event: `{ "eventType": "...", "payload": { ... } }`. Optional `Idempotency-Key` header. | `202` with `{ "eventId": "..." }` |
+| `POST`   | `/subscriptions`             | Register a webhook URL: `{ "eventType": "...", "url": "https://..." }`                            | `201`                             |
+| `GET`    | `/subscriptions`             | List your subscriptions                                                                           | `200`                             |
+| `DELETE` | `/subscriptions/{eventType}` | Remove a subscription (`204` even if none existed)                                                | `204`                             |
 
 **Subscription rules.** `url` must use `https:`, carry no embedded credentials, and
 not be `localhost`, a private or loopback IPv4 address, or an IPv6 literal.
 `eventType` is 1 to 256 characters from `A-Z a-z 0-9 . _ : -`.
+
+### Idempotent event submission
+
+Network failures and `500` responses leave a client unsure whether its event was
+accepted. Send an `Idempotency-Key` header and retry freely:
+
+```bash
+curl -i -X POST "$API_URL/events" \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -H "Idempotency-Key: order-12345-shipped" \
+  -d '{"eventType":"order.shipped","payload":{"orderId":"12345"}}'
+```
+
+Sending the same request again returns `202` with the same `eventId`, and no second
+event is created.
+
+- The key is 1 to 128 characters from `A-Z a-z 0-9 . _ : -`. Anything else returns `400`.
+- Keys are scoped to the authenticated user. Two users who send the same key get
+  different events.
+- Without the header, behavior is unchanged: every request creates a new event.
+- With a key, `eventId` is a 64-character hex string. Without one, it is a UUID.
+
+**Limits**
+
+- **Reusing a key with a different body is not detected.** The original eventId is
+  returned and the new body is ignored. Detecting it requires storing a request
+  fingerprint.
+- **A retry after a fully successful first attempt sends the event to the queue
+  again,** so subscribers may receive it twice, with the same `X-Webhook-Event-Id`.
+  Delivery stays at-least-once.
+- **A key refers to its event permanently,** because events are not currently expired.
 
 ## Webhook delivery
 
@@ -162,8 +206,9 @@ function isValidSignature(
 }
 ```
 
-A message can be redelivered when another subscriber on the same event fails, so
-subscribers should deduplicate on `X-Webhook-Event-Id`.
+A message can be delivered more than once: when another subscriber on the same event
+fails, or when a client retries an idempotent request after the first attempt
+succeeded. Subscribers should deduplicate on `X-Webhook-Event-Id`.
 
 ## Getting started
 
@@ -246,10 +291,10 @@ The CDK bootstrap resources are shared and are left in place.
 
 ## Testing
 
-| Suite                  | Command                    | What it covers                                                                              |
-| ---------------------- | -------------------------- | ------------------------------------------------------------------------------------------- |
-| Unit (79 tests)        | `npm test`                 | Infrastructure assertions, input validation, retry logic, header and trace helpers          |
-| Integration (10 tests) | `npm run test:integration` | Auth, subscription lifecycle, ownership, and signed end-to-end delivery on a deployed stack |
+| Suite                  | Command                    | What it covers                                                                                                                  |
+| ---------------------- | -------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| Unit (93 tests)        | `npm test`                 | Infrastructure assertions, input validation, retry logic, idempotency and response helpers, header and trace helpers            |
+| Integration (17 tests) | `npm run test:integration` | Auth, subscription lifecycle, ownership, idempotent retries, JSON responses, and signed end-to-end delivery on a deployed stack |
 
 The integration suite is run manually against a deployed stack, since CI has no AWS
 environment. Copy `.env.example` to `.env.local` and fill it from the deploy outputs:
@@ -277,10 +322,10 @@ Secrets Manager directly, so your AWS credentials need access to both.
 bin/            CDK app entry point
 lib/            The stack: every AWS resource
 lambda/
-  ingest/       POST /events
+  ingest/       POST /events, idempotency key handling
   dispatch/     SQS consumer: delivery, retry, headers
   subscriptions/  create, list, delete, validation
-  shared/       trace helpers
+  shared/       trace and response helpers
 test/           Unit tests
 integration/    Integration tests and setup
 postman/        Postman collection with valid and invalid examples
@@ -290,8 +335,10 @@ postman/        Postman collection with valid and invalid examples
 
 - **Event status never changes.** Events stay `PENDING`; delivery outcomes appear in
   logs and the dead-letter queue, not on the record.
-- **No idempotency key.** A client retry creates a new event, and a failed enqueue
-  can leave an orphaned `PENDING` event.
+- **Idempotency is opt-in and partial.** Only requests that send an
+  `Idempotency-Key` are safe to retry. Reusing a key with a different body is not
+  detected. Without a key, a failed enqueue followed by a retry creates a second
+  event and leaves the first as an orphaned `PENDING` event.
 - **Whole-message retry.** If one of several subscribers fails, all of them receive
   the event again. Subscribers deduplicate on `X-Webhook-Event-Id`.
 - **One shared signing secret,** with no per-subscriber secrets or rotation. The
@@ -309,8 +356,9 @@ postman/        Postman collection with valid and invalid examples
 
 ## What I'd do next
 
-1. An idempotency key on `POST /events`, plus status updates and a job that
-   re-enqueues orphaned `PENDING` events.
+1. Per-event delivery state: track status through delivery, detect an idempotency
+   key reused with a different payload, and re-enqueue orphaned `PENDING` events
+   whose client never retried.
 2. Per-subscriber signing secrets and rotation.
 3. OAuth client credentials for machine clients.
 4. SNS notifications for the dead-letter alarm.

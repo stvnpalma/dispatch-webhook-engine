@@ -1,10 +1,18 @@
-import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
+import {
+  ConditionalCheckFailedException,
+  DynamoDBClient,
+} from '@aws-sdk/client-dynamodb';
 import { SQSClient, SendMessageCommand } from '@aws-sdk/client-sqs';
 import { DynamoDBDocumentClient, PutCommand } from '@aws-sdk/lib-dynamodb';
-import { APIGatewayProxyHandlerV2 } from 'aws-lambda';
+import {
+  APIGatewayProxyEventV2WithJWTAuthorizer,
+  APIGatewayProxyResultV2,
+} from 'aws-lambda';
 import crypto from 'crypto';
 import { jsonResponse } from '../shared/response';
 import { buildTraceAttributes, parseTraceId } from '../shared/trace';
+import { getSubscriberId } from '../subscriptions/claims';
+import { deriveEventId, parseIdempotencyKey } from './idempotency';
 
 const client = new DynamoDBClient({});
 const docClient = DynamoDBDocumentClient.from(client);
@@ -25,7 +33,24 @@ function writeLog(
   );
 }
 
-export const handler: APIGatewayProxyHandlerV2 = async (event) => {
+export const handler = async (
+  event: APIGatewayProxyEventV2WithJWTAuthorizer
+): Promise<APIGatewayProxyResultV2> => {
+  // 1. Get caller using getSubscriberId; return 401 if unauthorized
+  const sub = getSubscriberId(event);
+  if (!sub) {
+    return jsonResponse(401, { error: 'Unauthorized' });
+  }
+
+  // 2. Read and parse 'idempotency-key' header
+  const idempotencyHeader = event.headers?.['idempotency-key'];
+  const idempotencyResult = parseIdempotencyKey(idempotencyHeader);
+
+  if (!idempotencyResult.ok) {
+    return jsonResponse(400, { error: idempotencyResult.error });
+  }
+  const idempotencyKey = idempotencyResult.key;
+
   const rawBody = event.body;
 
   if (!rawBody) {
@@ -71,7 +96,11 @@ export const handler: APIGatewayProxyHandlerV2 = async (event) => {
     return jsonResponse(500, { error: 'Internal server error' });
   }
 
-  const eventId = crypto.randomUUID();
+  // 3. Derive eventId deterministically if key is present, otherwise random UUID
+  const eventId = idempotencyKey
+    ? deriveEventId(sub, idempotencyKey)
+    : crypto.randomUUID();
+
   const item = {
     eventId,
     eventType,
@@ -80,12 +109,13 @@ export const handler: APIGatewayProxyHandlerV2 = async (event) => {
     createdAt: new Date().toISOString(),
   };
 
-  // 1. DynamoDB Write
+  // 4. DynamoDB Write with ConditionExpression & ConditionalCheckFailedException handling
   try {
     await docClient.send(
       new PutCommand({
         TableName: tableName,
         Item: item,
+        ConditionExpression: 'attribute_not_exists(eventId)',
       })
     );
 
@@ -93,17 +123,25 @@ export const handler: APIGatewayProxyHandlerV2 = async (event) => {
       eventId,
     });
   } catch (error) {
-    writeLog('error', 'Failed to write event to DynamoDB', {
-      error: error instanceof Error ? error.message : String(error),
-    });
+    if (
+      idempotencyKey !== undefined &&
+      error instanceof ConditionalCheckFailedException
+    ) {
+      writeLog('info', 'Idempotent retry: event already stored', { eventId });
+      // Continue to SQS send
+    } else {
+      writeLog('error', 'Failed to write event to DynamoDB', {
+        error: error instanceof Error ? error.message : String(error),
+      });
 
-    return jsonResponse(500, { error: 'Internal server error' });
+      return jsonResponse(500, { error: 'Internal server error' });
+    }
   }
 
   // Use Lambda's execution environment trace ID for propagation
   const traceHeader = process.env._X_AMZN_TRACE_ID;
 
-  // 2. SQS Send (Independent Try/Catch)
+  // 5. SQS Send and 202 Response
   try {
     await sqsClient.send(
       new SendMessageCommand({

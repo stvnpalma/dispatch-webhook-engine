@@ -77,12 +77,18 @@ While local hooks and commands provide fast, instantaneous feedback, they are ul
 
 ### 7. Releases
 
-- A release is a pull request from `dev` to `main`, squash-merged. Squash is the
-  only enabled merge method, and `main` requires linear history.
-- After a release, `main` and `dev` have identical contents but different
-  histories, because the squash creates one commit on `main` that `dev` doesn't
-  have. Check with `git diff origin/main origin/dev --stat` (it should print
-  nothing). The next release PR may list many commits. If it shows conflicts,
-  sync `dev` with `main` before merging.
-- Before tagging, smoke-test a fresh deploy from `main` by following the README,
-  then tag `vX.Y.Z` (annotated) on `main` and publish a GitHub Release.
+- A release is a pull request into `main`, squash-merged. Squash is the only
+  enabled merge method, and `main` requires linear history.
+- Because each release is squashed, `main` and `dev` end up with identical
+  contents but different histories. A direct `dev` to `main` pull request then
+  conflicts in every file that changed since the last release. Release from a
+  branch cut from `main` instead:
+  1. `git checkout --no-track -b release/vX.Y.Z origin/main`
+  2. `git checkout origin/dev -- .`
+  3. Commit as `chore(release): vX.Y.Z`, then run
+     `git diff origin/dev HEAD --stat`. It must print nothing, which proves the
+     release branch matches `dev`. If it lists a file deleted on `dev`, remove
+     it with `git rm` and commit again.
+  4. Push, open a pull request into `main`, and squash-merge it after CI passes.
+- Before tagging, smoke-test a deploy from `main`, then tag `vX.Y.Z` (annotated)
+  on `main` and publish a GitHub Release.

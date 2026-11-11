@@ -1,158 +1,113 @@
-import { APIGatewayProxyEventV2WithJWTAuthorizer } from 'aws-lambda';
-import { handler } from '../lambda/ingest/handler';
+import { apiClient } from './apiClient';
+import { getAccessToken, getTestUsers } from './authHelper';
 
-function createMockEvent(
-  sub: string,
-  idempotencyKey?: string,
-  body = { eventType: 'order.created', payload: { id: 1 } }
-): APIGatewayProxyEventV2WithJWTAuthorizer {
-  return {
-    version: '2.0',
-    routeKey: 'POST /ingest',
-    rawPath: '/ingest',
-    rawQueryString: '',
-    headers: {
-      ...(idempotencyKey ? { 'idempotency-key': idempotencyKey } : {}),
-      'content-type': 'application/json',
-    },
-    requestContext: {
-      accountId: '123456789012',
-      apiId: 'api-id',
-      domainName: 'id.execute-api.us-east-1.amazonaws.com',
-      domainPrefix: 'id',
-      http: {
-        method: 'POST',
-        path: '/ingest',
-        protocol: 'HTTP/1.1',
-        sourceIp: '127.0.0.1',
-        userAgent: 'Jest',
-      },
-      requestId: 'req-id',
-      routeKey: 'POST /ingest',
-      stage: '$default',
-      time: '01/Jan/2026:00:00:00 +0000',
-      timeEpoch: 1767225600000,
-      authorizer: {
-        jwt: {
-          claims: { sub },
-          scopes: ['openid'],
-        },
-        principalId: '',
-        integrationLatency: 0,
-      },
-    },
-    body: JSON.stringify(body),
-    isBase64Encoded: false,
-  };
+interface EventResponse {
+  eventId: string;
 }
 
-describe('Ingest Handler Idempotency Integration Tests', () => {
-  const userA = 'sub-user-a';
-  let sharedKey: string;
+interface ErrorResponse {
+  error: string;
+}
 
-  beforeEach(() => {
-    sharedKey = `idem-${Date.now()}`;
-    process.env.EVENTS_TABLE_NAME = 'MockEventsTable';
-    process.env.EVENTS_QUEUE_URL =
-      'https://sqs.us-east-1.amazonaws.com/123/MockQueue';
+const HEX_64 = /^[0-9a-f]{64}$/;
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+describe('POST /events idempotency (deployed stack)', () => {
+  let tokenA: string;
+  let tokenB: string;
+
+  const runId = Date.now();
+
+  const eventBody = () => ({
+    eventType: 'integration.idempotency',
+    payload: { run: Date.now() },
   });
 
-  test('same key twice (user A) -> both 202, identical eventId', async () => {
-    const event1 = createMockEvent(userA, sharedKey);
-    const event2 = createMockEvent(userA, sharedKey);
-
-    const res1 = (await handler(event1)) as {
-      statusCode: number;
-      body?: string;
-    };
-    const res2 = (await handler(event2)) as {
-      statusCode: number;
-      body?: string;
-    };
-
-    expect(res1.statusCode).toEqual(202);
-    expect(res2.statusCode).toEqual(202);
-
-    const body1 = JSON.parse(res1.body ?? '{}') as { eventId: string };
-    const body2 = JSON.parse(res2.body ?? '{}') as { eventId: string };
-
-    expect(body1.eventId).toBeDefined();
-    expect(body1.eventId).toEqual(body2.eventId);
+  const headersFor = (token: string, key?: string) => ({
+    Authorization: `Bearer ${token}`,
+    ...(key !== undefined ? { 'Idempotency-Key': key } : {}),
   });
 
-  test('different keys (user A) -> different eventIds', async () => {
-    const event1 = createMockEvent(userA, `idem-1-${Date.now()}`);
-    const event2 = createMockEvent(userA, `idem-2-${Date.now()}`);
+  beforeAll(async () => {
+    const users = getTestUsers();
 
-    const res1 = (await handler(event1)) as {
-      statusCode: number;
-      body?: string;
-    };
-    const res2 = (await handler(event2)) as {
-      statusCode: number;
-      body?: string;
-    };
-
-    expect(res1.statusCode).toEqual(202);
-    expect(res2.statusCode).toEqual(202);
-
-    const body1 = JSON.parse(res1.body ?? '{}') as { eventId: string };
-    const body2 = JSON.parse(res2.body ?? '{}') as { eventId: string };
-
-    expect(body1.eventId).not.toEqual(body2.eventId);
+    [tokenA, tokenB] = await Promise.all([
+      getAccessToken(users[0]),
+      getAccessToken(users[1]),
+    ]);
   });
 
-  test('no key twice -> different eventIds', async () => {
-    const event1 = createMockEvent(userA, undefined);
-    const event2 = createMockEvent(userA, undefined);
+  test('same key twice (user A) returns 202 and the same eventId', async () => {
+    const key = `idem-${runId}-same`;
+    const body = eventBody();
 
-    const res1 = (await handler(event1)) as {
-      statusCode: number;
-      body?: string;
-    };
-    const res2 = (await handler(event2)) as {
-      statusCode: number;
-      body?: string;
-    };
+    const first = await apiClient.post<EventResponse>('/events', body, {
+      headers: headersFor(tokenA, key),
+    });
+    const second = await apiClient.post<EventResponse>('/events', body, {
+      headers: headersFor(tokenA, key),
+    });
 
-    expect(res1.statusCode).toEqual(202);
-    expect(res2.statusCode).toEqual(202);
-
-    const body1 = JSON.parse(res1.body ?? '{}') as { eventId: string };
-    const body2 = JSON.parse(res2.body ?? '{}') as { eventId: string };
-
-    expect(body1.eventId).not.toEqual(body2.eventId);
+    expect(first.status).toBe(202);
+    expect(second.status).toBe(202);
+    expect(first.data.eventId).toMatch(HEX_64);
+    expect(second.data.eventId).toBe(first.data.eventId);
   });
 
-  test('invalid key bad key!', async () => {
-    const event = createMockEvent(userA, 'bad key');
-    const res = (await handler(event)) as { statusCode: number; body?: string };
+  test('different keys (user A) produce different eventIds', async () => {
+    const first = await apiClient.post<EventResponse>('/events', eventBody(), {
+      headers: headersFor(tokenA, `idem-${runId}-one`),
+    });
+    const second = await apiClient.post<EventResponse>('/events', eventBody(), {
+      headers: headersFor(tokenA, `idem-${runId}-two`),
+    });
 
-    expect(res.statusCode).toEqual(400);
-    const body = JSON.parse(res.body ?? '{}') as { error: string };
-    expect(body.error).toBeDefined();
+    expect(first.status).toBe(202);
+    expect(second.status).toBe(202);
+    expect(first.data.eventId).toMatch(HEX_64);
+    expect(second.data.eventId).toMatch(HEX_64);
+    expect(second.data.eventId).not.toBe(first.data.eventId);
   });
 
-  test('same key from user A and user B -> different eventIds (scoping)', async () => {
-    const userB = 'sub-user-b';
-    const eventA = createMockEvent(userA, sharedKey);
-    const eventB = createMockEvent(userB, sharedKey);
+  test('no key twice produces two different UUID eventIds', async () => {
+    const first = await apiClient.post<EventResponse>('/events', eventBody(), {
+      headers: headersFor(tokenA),
+    });
+    const second = await apiClient.post<EventResponse>('/events', eventBody(), {
+      headers: headersFor(tokenA),
+    });
 
-    const resA = (await handler(eventA)) as {
-      statusCode: number;
-      body?: string;
-    };
-    const resB = (await handler(eventB)) as {
-      statusCode: number;
-      body?: string;
-    };
+    expect(first.status).toBe(202);
+    expect(second.status).toBe(202);
+    expect(first.data.eventId).toMatch(UUID);
+    expect(second.data.eventId).toMatch(UUID);
+    expect(second.data.eventId).not.toBe(first.data.eventId);
+  });
 
-    expect(resA.statusCode).toEqual(202);
-    expect(resB.statusCode).toEqual(202);
+  test('an invalid key returns 400 with an error message', async () => {
+    const response = await apiClient.post<ErrorResponse>(
+      '/events',
+      eventBody(),
+      { headers: headersFor(tokenA, 'bad key!') }
+    );
 
-    const bodyA = JSON.parse(resA.body ?? '{}') as { eventId: string };
-    const bodyB = JSON.parse(resB.body ?? '{}') as { eventId: string };
+    expect(response.status).toBe(400);
+    expect(typeof response.data.error).toBe('string');
+  });
 
-    expect(bodyA.eventId).not.toEqual(bodyB.eventId);
+  test('the same key from user A and user B produces different eventIds', async () => {
+    const key = `idem-${runId}-scope`;
+    const body = eventBody();
+
+    const fromA = await apiClient.post<EventResponse>('/events', body, {
+      headers: headersFor(tokenA, key),
+    });
+    const fromB = await apiClient.post<EventResponse>('/events', body, {
+      headers: headersFor(tokenB, key),
+    });
+
+    expect(fromA.status).toBe(202);
+    expect(fromB.status).toBe(202);
+    expect(fromB.data.eventId).not.toBe(fromA.data.eventId);
   });
 });

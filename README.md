@@ -23,7 +23,7 @@ least-privilege IAM, and verification against a real deployed stack.
   per-message retry through SQS, a dead-letter queue, and a CloudWatch alarm on it.
 - **Least-privilege IAM.** One role per Lambda, limited to the actions that function
   needs. The only account-wide wildcard is X-Ray's, documented below.
-- **Tested at two levels.** 93 unit tests and a 10-test integration suite that runs
+- **Tested at two levels.** 93 unit tests and a 17-test integration suite that runs
   against a deployed stack, including an end-to-end delivery check.
 - **Observable.** Structured JSON logs and X-Ray tracing, with an `eventId` that
   correlates the functions.
@@ -294,7 +294,7 @@ The CDK bootstrap resources are shared and are left in place.
 | Suite                  | Command                    | What it covers                                                                                                                  |
 | ---------------------- | -------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
 | Unit (93 tests)        | `npm test`                 | Infrastructure assertions, input validation, retry logic, idempotency and response helpers, header and trace helpers            |
-| Integration (10 tests) | `npm run test:integration` | Auth, subscription lifecycle, ownership, idempotent retries, JSON responses, and signed end-to-end delivery on a deployed stack |
+| Integration (17 tests) | `npm run test:integration` | Auth, subscription lifecycle, ownership, idempotent retries, JSON responses, and signed end-to-end delivery on a deployed stack |
 
 The integration suite is run manually against a deployed stack, since CI has no AWS
 environment. Copy `.env.example` to `.env.local` and fill it from the deploy outputs:
